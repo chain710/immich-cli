@@ -18,8 +18,7 @@ var cfgFile string
 
 //go:generate oapi-codegen -generate "types,client" -package client -o client/immich.auto_generated.go https://raw.githubusercontent.com/immich-app/immich/d2807b8d6ab1a72f37a662423ddda54f41c742ce/server/immich-openapi-specs.json
 
-func initConfig() {
-	// Don't forget to read config either from cfgFile or from home directory!
+func initConfig(bindViperFlags *pflag.FlagSet) {
 	if cfgFile != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
@@ -42,28 +41,39 @@ func initConfig() {
 	} else {
 		log.Debugf("Use viper config: %s", viper.ConfigFileUsed())
 	}
+
+	// set flag's value to bypass required check
+	bindViperFlags.VisitAll(func(flag *pflag.Flag) {
+		if viper.IsSet(flag.Name) {
+			_ = bindViperFlags.Set(flag.Name, viper.GetString(flag.Name))
+		}
+	})
 }
 
 func main() {
-	cobra.OnInitialize(initConfig)
-
-	root := &cobra.Command{
+	var rootCommand = &cobra.Command{
 		Use: "immich-cli",
 	}
 
-	root.AddCommand(cmd.GetAssetsCmd())
+	bindViperFlags := pflag.NewFlagSet("flagInConfig", pflag.ContinueOnError)
+	bindViperFlags.StringVarP(&logLevel, "log-level", "L", log.InfoLevel.String(), "log level: debug|info|warning|error")
+	bindViperFlags.StringVarP(&apiURL, cmd.ViperKey_API, "a", "", "api address, like: https://immich.example.com/api")
+	bindViperFlags.StringVarP(&apiKey, cmd.ViperKey_APIKey, "", "", "api key obtained from immich admin")
+	cobra.CheckErr(viper.BindPFlags(bindViperFlags))
+	cobra.OnInitialize(func() {
+		initConfig(bindViperFlags)
+	})
 
-	flagSet := pflag.NewFlagSet("flagInConfig", pflag.ContinueOnError)
-	flagSet.StringVarP(&logLevel, "log-level", "L", log.InfoLevel.String(), "log level: debug|info|warning|error")
-	flagSet.StringVarP(&apiURL, cmd.ViperKey_API, "a", "", "api address, like: https://immich.example.com/api")
-	flagSet.StringVarP(&apiKey, cmd.ViperKey_APIKey, "", "", "api key obtained from immich admin")
-	cobra.CheckErr(viper.BindPFlags(flagSet))
-
-	root.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.immich)")
-	root.PersistentFlags().AddFlagSet(flagSet)
-	cobra.CheckErr(root.MarkPersistentFlagRequired(cmd.ViperKey_API))
-	cobra.CheckErr(root.MarkPersistentFlagRequired(cmd.ViperKey_APIKey))
-	if err := root.Execute(); err != nil {
+	// set default out as stdout
+	rootCommand.SetOut(os.Stdout)
+	// add sub commands
+	rootCommand.AddCommand(cmd.GetAssetsCmd())
+	persistentFlags := rootCommand.PersistentFlags()
+	persistentFlags.StringVar(&cfgFile, "config", "", "config file (default is $HOME/.immich)")
+	persistentFlags.AddFlagSet(bindViperFlags)
+	cobra.CheckErr(rootCommand.MarkPersistentFlagRequired(cmd.ViperKey_API))
+	cobra.CheckErr(rootCommand.MarkPersistentFlagRequired(cmd.ViperKey_APIKey))
+	if err := rootCommand.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
