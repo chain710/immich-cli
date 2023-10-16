@@ -67,7 +67,10 @@ func main() {
 	// set default out as stdout
 	rootCommand.SetOut(os.Stdout)
 	// add sub commands
-	rootCommand.AddCommand(cmd.GetAssetsCmd())
+	rootCommand.AddCommand(
+		cmd.GetAssetsCmd(),
+		cmd.DeleteDuplicatesCmd(),
+	)
 	persistentFlags := rootCommand.PersistentFlags()
 	persistentFlags.StringVar(&cfgFile, "config", "", "config file (default is $HOME/.immich)")
 	persistentFlags.AddFlagSet(bindViperFlags)
