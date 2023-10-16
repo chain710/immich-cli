@@ -37,6 +37,7 @@ func (c *deleteDuplicatesCmd) processGroup(ctx context.Context, group []string) 
 	for _, assetId := range group {
 		aq, err := c.getAssetQuality(ctx, assetId)
 		if err != nil {
+			log.Warnf("get asset %s error: %v", assetId, err)
 			errs = append(errs, err)
 			continue
 		}
@@ -51,6 +52,14 @@ func (c *deleteDuplicatesCmd) processGroup(ctx context.Context, group []string) 
 		return assets[i].score > assets[j].score
 	})
 
+	log.DebugFn(func() []interface{} {
+		var values []any
+		for _, asset := range assets {
+			values = append(values, fmt.Sprintf("%s: %d,", asset.id.String(), asset.score))
+		}
+
+		return values
+	})
 	// keep: assets[0], delete others
 	var ids []openapi_types.UUID
 	for _, asset := range assets[1:] {
@@ -83,14 +92,12 @@ func (c *deleteDuplicatesCmd) getAssetQuality(ctx context.Context,
 }
 
 func (c *deleteDuplicatesCmd) deleteAsset(ctx context.Context, ids []openapi_types.UUID) error {
-	defer func() { log.Infof("Done!") }()
-	if c.dryRun {
-		for _, id := range ids {
-			log.Infof("Should delete asset: %s", id.String())
-		}
-		return nil
-	} else if c.archive {
-		log.Infof("ready to archive assets...")
+	defer func() { log.Debugf("Done!") }()
+	for _, id := range ids {
+		log.Infof("Should delete asset: `%s`, dryRun: %v", id.String(), c.dryRun)
+	}
+	if c.archive {
+		log.Debugf("ready to archive assets...")
 		body := client.UpdateAssetsJSONRequestBody{
 			Ids:        ids,
 			IsArchived: &c.archive,
@@ -106,8 +113,8 @@ func (c *deleteDuplicatesCmd) deleteAsset(ctx context.Context, ids []openapi_typ
 		}
 
 		return nil
-	} else {
-		log.Infof("ready to delete assets...")
+	} else if !c.dryRun {
+		log.Debugf("ready to delete assets...")
 		force := true
 		body := client.DeleteAssetsJSONRequestBody{
 			Force: &force,
@@ -124,9 +131,14 @@ func (c *deleteDuplicatesCmd) deleteAsset(ctx context.Context, ids []openapi_typ
 
 		return nil
 	}
+
+	return nil
 }
 
 func (c *deleteDuplicatesCmd) run(cmd *cobra.Command, _ []string) error {
+	c.queue = make(chan []string, c.concurrent)
+	c.client = newClient()
+
 	file, err := os.Open(c.duplicateDatabase)
 	if err != nil {
 		log.Errorf("open `%s` error: %v", c.duplicateDatabase, err)
@@ -157,21 +169,20 @@ func (c *deleteDuplicatesCmd) run(cmd *cobra.Command, _ []string) error {
 		}()
 	}
 
-	queue := make(chan []string, c.concurrent)
 	for _, group := range duplicates {
-		queue <- group
+		c.queue <- group
 	}
 
-	close(queue)
+	close(c.queue)
 	wg.Wait()
-	return errors.Join(errs...)
+	if len(errs) > 0 {
+		log.Warnf("%d error(s) occured during process, see log for more details", len(errs))
+	}
+	return nil
 }
 
 func DeleteDuplicatesCmd() *cobra.Command {
-	impl := &deleteDuplicatesCmd{
-		queue:  make(chan []string, 10),
-		client: newClient(),
-	}
+	impl := &deleteDuplicatesCmd{}
 	cmd := &cobra.Command{
 		Use:  "delete_duplicates",
 		RunE: impl.run,
