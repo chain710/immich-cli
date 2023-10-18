@@ -16,7 +16,7 @@ var apiURL string
 var apiKey string
 var cfgFile string
 
-//go:generate oapi-codegen -generate "types,client" -package client -o client/immich.auto_generated.go https://raw.githubusercontent.com/immich-app/immich/d2807b8d6ab1a72f37a662423ddda54f41c742ce/server/immich-openapi-specs.json
+//go:generate oapi-codegen -generate "types,client" -package client -o client/immich.auto_generated.go https://raw.githubusercontent.com/immich-app/immich/v1.82.0/server/immich-openapi-specs.json
 
 func initConfig(bindViperFlags *pflag.FlagSet) {
 	if cfgFile != "" {
@@ -32,7 +32,7 @@ func initConfig(bindViperFlags *pflag.FlagSet) {
 	}
 
 	err := viper.ReadInConfig()
-	level, err := log.ParseLevel(logLevel)
+	level, err := log.ParseLevel(viper.GetString(cmd.ViperKey_LogLevel))
 	cobra.CheckErr(err)
 	log.SetLevel(level)
 
@@ -56,7 +56,7 @@ func main() {
 	}
 
 	bindViperFlags := pflag.NewFlagSet("flagInConfig", pflag.ContinueOnError)
-	bindViperFlags.StringVarP(&logLevel, "log-level", "L", log.InfoLevel.String(), "log level: debug|info|warning|error")
+	bindViperFlags.StringVarP(&logLevel, cmd.ViperKey_LogLevel, "L", log.InfoLevel.String(), "log level: debug|info|warning|error")
 	bindViperFlags.StringVarP(&apiURL, cmd.ViperKey_API, "a", "", "api address, like: https://immich.example.com/api")
 	bindViperFlags.StringVarP(&apiKey, cmd.ViperKey_APIKey, "", "", "api key obtained from immich admin")
 	cobra.CheckErr(viper.BindPFlags(bindViperFlags))
@@ -70,6 +70,7 @@ func main() {
 	rootCommand.AddCommand(
 		cmd.GetAssetsCmd(),
 		cmd.DeleteDuplicatesCmd(),
+		cmd.DeleteAssetCmd(),
 	)
 	persistentFlags := rootCommand.PersistentFlags()
 	persistentFlags.StringVar(&cfgFile, "config", "", "config file (default is $HOME/.immich)")

@@ -13,14 +13,16 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 )
 
 type deleteDuplicatesCmd struct {
-	duplicateDatabase string
-	dryRun            bool
-	archive           bool
-	concurrent        int
+	database   string
+	dryRun     bool
+	archive    bool
+	concurrent int
+	force      bool
 
 	client client.ClientWithResponsesInterface
 	queue  chan []string
@@ -84,11 +86,17 @@ func (c *deleteDuplicatesCmd) getAssetQuality(ctx context.Context,
 		return nil, newUnexpectedResponse(response.StatusCode())
 	}
 
-	if response.JSON200.ExifInfo == nil || response.JSON200.ExifInfo.FileSizeInByte == nil {
-		return &assetQuality{id: assetUUID, score: 0}, nil
+	var score int64
+	if response.JSON200.ExifInfo != nil && response.JSON200.ExifInfo.FileSizeInByte != nil {
+		score = *response.JSON200.ExifInfo.FileSizeInByte
 	}
 
-	return &assetQuality{id: assetUUID, score: *response.JSON200.ExifInfo.FileSizeInByte}, nil
+	// prefer heic
+	if strings.HasSuffix(strings.ToLower(response.JSON200.OriginalPath), ".heic") {
+		score = score * 10
+	}
+
+	return &assetQuality{id: assetUUID, score: score}, nil
 }
 
 func (c *deleteDuplicatesCmd) deleteAsset(ctx context.Context, ids []openapi_types.UUID) error {
@@ -115,9 +123,8 @@ func (c *deleteDuplicatesCmd) deleteAsset(ctx context.Context, ids []openapi_typ
 		return nil
 	} else if !c.dryRun {
 		log.Debugf("ready to delete assets...")
-		force := true
 		body := client.DeleteAssetsJSONRequestBody{
-			Force: &force,
+			Force: &c.force,
 			Ids:   ids,
 		}
 		response, err := c.client.DeleteAssetsWithResponse(ctx, body)
@@ -139,9 +146,9 @@ func (c *deleteDuplicatesCmd) run(cmd *cobra.Command, _ []string) error {
 	c.queue = make(chan []string, c.concurrent)
 	c.client = newClient()
 
-	file, err := os.Open(c.duplicateDatabase)
+	file, err := os.Open(c.database)
 	if err != nil {
-		log.Errorf("open `%s` error: %v", c.duplicateDatabase, err)
+		log.Errorf("open `%s` error: %v", c.database, err)
 		return err
 	}
 	defer file.Close()
@@ -188,10 +195,11 @@ func DeleteDuplicatesCmd() *cobra.Command {
 		RunE: impl.run,
 	}
 
-	cmd.Flags().StringVar(&impl.duplicateDatabase, "duplicate-database", "", "duplicate database json file")
-	cobra.CheckErr(cmd.MarkFlagRequired("duplicate-database"))
+	cmd.Flags().StringVar(&impl.database, "database", "", "duplicate database json file")
+	cobra.CheckErr(cmd.MarkFlagRequired("database"))
 	cmd.Flags().BoolVar(&impl.dryRun, "dry-run", false, "don't actually delete")
 	cmd.Flags().BoolVar(&impl.archive, "archive", false, "archive photo instead of delete")
 	cmd.Flags().IntVar(&impl.concurrent, "concurrent", 4, "num of concurrent workers")
+	cmd.Flags().BoolVar(&impl.force, "force", false, "force delete")
 	return cmd
 }
